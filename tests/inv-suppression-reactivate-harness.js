@@ -1,4 +1,6 @@
+// Restored from .history snapshot
 // /inv suppression reactivation harness
+
 // Ensures the inventory tagging prompt is suppressed while item cards are pending
 // and reactivates automatically once all queued /inv story cards are created.
 
@@ -100,12 +102,14 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
 
   // Immediately after queuing, context should be suppressed (no standing prompt)
   let t1 = runContext(ctx, 'Story...');
-  assert(!/Inventory\s+Tagging/i.test(t1), 'Standing prompt should be suppressed while generations pending');
+  assert(!/Inventory\s+Tagging/i.test(t1), 'Inventory prompt should be suppressed while generations pending');
+  assert(!/Injury\s+Tagging/i.test(t1), 'Injury prompt should be suppressed while generations pending');
 
   // Simulate only one card being created: still suppressed
   apiStub._cards.push({ title: 'Iron Sword', type: 'weapon', keys: 'Iron Sword', entry: '{title: Iron Sword}', description: '...' });
   let t2 = runContext(ctx, 'Story...');
-  assert(!/Inventory\s+Tagging/i.test(t2), 'Standing prompt should remain suppressed until all cards exist');
+  assert(!/Inventory\s+Tagging/i.test(t2), 'Inventory prompt should remain suppressed until all cards exist');
+  assert(!/Injury\s+Tagging/i.test(t2), 'Injury prompt should remain suppressed until all cards exist');
 
   // Simulate the rest being created
   apiStub._cards.push({ title: 'Leather Armor', type: 'armor', keys: 'Leather Armor', entry: '{title: Leather Armor}', description: '...' });
@@ -113,7 +117,8 @@ function assert(cond, msg){ if (!cond) throw new Error(msg); }
 
   // Now the context should reactivate the standing prompt automatically
   let t3 = runContext(ctx, 'Story...');
-  assert(/Inventory\s+Tagging/i.test(t3), 'Standing prompt should reactivate after all cards exist');
+  assert(/Inventory\s+Tagging/i.test(t3), 'Inventory prompt should reactivate after all cards exist');
+  assert(/Injury\s+Tagging/i.test(t3), 'Injury prompt should reactivate after all cards exist');
 
   // And the suppression bag should be cleared
   const bag = ctx.state._ACS || {};

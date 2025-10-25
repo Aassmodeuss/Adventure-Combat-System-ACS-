@@ -1,3 +1,4 @@
+// Restored from .history snapshot
 // Simple /inv command harness
 // Purpose: Validate that ACS("input") handles /inv by creating item cards for inventory entries
 // and returns a "please select \"continue\" (0%)" placeholder like Auto-Cards.
@@ -116,8 +117,9 @@ function main() {
   assert(titles.has('Rope'), 'Missing generation: Rope');
 
   // Validate queued request structure for item-type generations
-  const badDesc = apiStub._generated.filter(c => c.type === 'item' && !/Auto-Cards will contextualize these memories:/i.test(c.description || ''));
-  assert(badDesc.length === 0, `Descriptions missing AC header: ${badDesc.map(c => c.title).join(', ')}`);
+  // New behavior: descriptions should NOT include the AC memory header; Auto-Cards will append it when building the card.
+  const withHeader = apiStub._generated.filter(c => c.type === 'item' && /Auto-Cards will contextualize these memories:/i.test(c.description || ''));
+  assert(withHeader.length === 0, `Descriptions should not include AC memory header: ${withHeader.map(c => c.title).join(', ')}`);
   const badLimit = apiStub._generated.filter(c => c.type === 'item' && Number(c.entryLimit) !== 400);
   assert(badLimit.length === 0, `Wrong entryLimit for items: ${badLimit.map(c => c.title).join(', ')}`);
 
@@ -138,7 +140,7 @@ function main() {
   assert(out3.includes('please select'), 'Must return continue prompt');
   const waterskin = [...apiStub._generated, ...apiStub._cards].find(c => c.title === 'Waterskin');
   assert(!!waterskin, 'Missing generation: Waterskin');
-  assert(/Category: (item|weapon|armor)/i.test(waterskin.description || ''), 'Waterskin description missing Category');
+  assert(/Category: (item|weapon|armor|clothing)/i.test(waterskin.description || ''), 'Waterskin description missing Category');
 
   // Subtest: ignore zero-quantity items
   console.log('Subtest: zero-quantity items');

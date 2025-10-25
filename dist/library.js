@@ -1,3 +1,4 @@
+// @ts-nocheck
 /// <reference types="../types/SharedLibraryTypes.d.ts"/>
 
 // Your "Library" tab should look like this
@@ -6287,7 +6288,9 @@ function ACS(inHook, inText, inStop) {
                 const description = (
                     title === "Inventory"
                     ? "Auto-Cards will contextualize these memories:\n{updates: false, limit: 2750}"
-                    : "Auto-Cards will contextualize these memories:\n{updates: true, limit: 2750}"
+                    : title === "Player Injuries"
+                        ? "Auto-Cards will contextualize these memories:\n{updates: true, limit: 500}"
+                        : "Auto-Cards will contextualize these memories:\n{updates: true, limit: 2750}"
                 );
                 API.buildCard({ title, type: "class", keys: title, entry, description });
                 API.setCardAsAuto(title, true);
@@ -6299,7 +6302,7 @@ function ACS(inHook, inText, inStop) {
         ensureReservedBans();
         ensureCoreCard("Player Stats", "> Player stats and milestones. Edit values only via gameplay mechanics.");
         ensureCoreCard("Inventory", "> Inventory summary. Item memories will be listed below.");
-        ensureCoreCard("Player Injuries", "> Current injuries and conditions.");
+    ensureCoreCard("Player Injuries", "> Player injury log (historical). Do not re-narrate this log in scene prose; only tag new injuries/heals inline.");
         ensureCoreCard("Equipped Weapon", "> Currently equipped weapon.");
         ensureCoreCard("Equipped Armor", "> Currently equipped armor.");
     }
@@ -6321,25 +6324,56 @@ function ACS(inHook, inText, inStop) {
     // Standing instruction appended to context to guide the model
     function buildInventoryStandingPrompt(){
         return (
-            "\n-----\n" +
             "<SYSTEM>\n" +
             "Inventory Tagging (compact):\n" +
-            "- Emit tags if the narration causes a real inventory change; otherwise emit no tags.\n" +
-            "- Format (end-only, no extra text): {\\pickup} item xN, item xM{\\!pickup} and {\\!drop} item xN, item xM{\\drop}.\n" +
-            "- Names: singular, lowercase (proper nouns excepted). Preserve material descriptors (e.g., brass compass, iron key); avoid size adjectives (small/large). Quantities via xN. Coins: gold/silver/copper coin xN.\n" +
-            "- Quantity formatting: exactly one quantity per item (one xN), never duplicate quantities.\n" +
-            "- Use exactly the nouns stated in narration; do not invent descriptors not present (e.g., if narration says 'arrows', tag 'arrow' not 'broadhead arrow' unless earlier context directly implies it).\n" +
-            "- Quantifiers: 'a/one handful|bundle|stack|pile|pouch|bag|sack of X' (no number) → choose 1 ≤ N < 10; tag X xN (for pickup or drop).\n" +
-            "- Multiple items: combine into a single block per action. If both actions occur, you MUST output both blocks: pickup first, then drop.\n" +
-            "- Discovery on person (belt/pocket/cloak/pack/backpack/satchel) or newly revealed possession → pickup x1 even without a verb. If it's a container (coin pouch, waterskin, backpack), add the container only; do not infer contents.\n" +
-            "- Do NOT tag observations ('see/notice'), dialogue, intentions/plans, hypotheticals, or failed/aborted actions.\n" +
-            "- If a number is stated (e.g., 'five arrows', 'two coins'), you MUST tag those exact items and counts (applies to pickup and drop).\n" +
-            "- Category (pickup only): EVERY pickup item (tools, materials, food, coins, etc.) MUST include exactly one category right after the item name: [weapon]/[armor]/[item]. Coins MUST use [item]. If unsure, use [item]. Do not add categories in drop.\n" +
-            "  • Examples: {\\pickup} iron sword[weapon] x1, leather armor[armor] x1, rope[item] x1{\\!pickup}\n" +
-            "             {\\pickup} gold coin[item] x5, silver coin[item] x2{\\!pickup}\n" +
-            "             {\\pickup} apple[item] x2{\\!pickup}{\\!drop} copper ore x1{\\drop}\n" +
-            "- MUST drop: when narration uses drop/discard/leave/remove/place/set down/put down/lay (or equivalent), emit a {\\!drop} block with the items and quantities.\n" +
-            "- Triggers (examples): pickup → pick up/take/grab/collect/gather/loot; drop → drop/discard/leave/remove/place/set down/put down/lay.\n" +
+            "- Narration first: write 1–3 sentences of in-world prose. Append ACS tag blocks only at the very end.\n" +
+            "- Visible story = plain prose; ABSOLUTELY NO XML/HTML or fabricated headers. Never output <pickup>, <drop>, <injury>, or <heal> tags. Allowed tags are ONLY {\\pickup}...{\\!pickup} and {\\!drop}...{\\drop} (end-only). If you typed any '<' or '>' characters, delete them and rewrite in plain prose before sending.\n" +
+            "- Tag only when the inventory changes.\n" +
+            "- Format: {\\pickup} item[cat] xN, ...{\\!pickup} and {\\!drop} item xN, ...{\\drop}. Names are singular, lowercase; keep material words (e.g., brass compass); counts as xN. Coins: gold/silver/copper coin xN. Do not use parentheses inside tags. If the same item is mentioned more than once in the same action, MERGE into a single entry and SUM the quantities.\n" +
+            "- Categories (pickup only): [weapon|armor|clothing|item]. Coins use [item]. If unsure, use [item]. Drop blocks contain no categories. Clothing = non-protective garments; armor = protective.\n" +
+            "- Quantifiers without numbers (e.g., 'a handful', bundle/stack/pile/pouch/bag/sack): pickups may choose 1–9 (coins 3–7); DROPS with vague quantifiers MUST be x1. One quantity per item.\n" +
+            "- Multiple items: one wrapper block per action (not one per item). Merge items with commas in a single block. If both occur, order pickup then drop; keep blocks contiguously at the very end. Do not net counts (e.g., pickup 2, drop 1).\n" +
+            "- Discovery on person (belt/pocket/cloak/pack/backpack/satchel/shoulder strap/hanging there, or realize you've had it all along): treat as pickup x1. Containers (coin pouch, waterskin, backpack, satchel, bag, sack, quiver, sheath, holster, scabbard) are items themselves; include contents only with explicit counts.\n" +
+            "- MUST drop on: drop/discard/leave/place/set/put/lay.\n" +
+            "- MUST pickup on: pick up/take/grab/collect/loot/scoop (explicit item acquisition). Picking up potions is a normal pickup; they are not consumed until later usage.\n" +
+            "- Ready/draw/equip/remove/take/take out/pull out/retrieve/produce/fish out/unholster/unsheathe alone are untagged unless you also deposit (drop/leave/set/put/lay) or use the item. Moving an item between your hand and your own gear (pack/backpack/satchel/bag/quiver/sheath/holster) is not a pickup or drop.\n" +
+            "- Usage MUST drop: shoot/fire/loose/launch/hurl/throw; drink/quaff/swallow/eat/devour/consume; burn; pay/spend; use charges. Potions: pick them up normally; when drunk, ALWAYS drop the exact potion name x1. If both pickup and drop verbs occur this turn, you MUST emit both blocks (pickup then drop).\n" +
+            "- Recovery: retrieving ammo/thrown weapons → {\\pickup} arrow[item] xN{\\!pickup}. Broken/destroyed stay dropped.\n" +
+            "- Craft/trade: drop consumed inputs/coins; pickup received result.\n" +
+            "- Self-check: remove any '<' or '>' characters; ensure at least one prose sentence before tags; if verbs drop/discard/leave/place/set/put/lay appear and you emitted no {\\!drop}, append one now; if verbs pick up/take/grab/collect/loot/scoop appear anywhere and you emitted no {\\pickup}, you MUST append one now with singular item names, categories, and exact counts; do not emit one wrapper per item—consolidate items for the same action into a single block; if the same item is listed multiple times (e.g., 'three berries and one berry'), MERGE into a single line and SUM counts; if both pickup and drop verbs appear, ensure BOTH blocks are present (pickup then drop); on any usage verb above, ensure exactly one {\\!drop} with item names and counts (default x1); if a potion is drunk/quaffed and no drop exists, append {\\!drop} <potion name> x1{\\drop}; on ready/draw/equip/remove/take/take out/pull out/retrieve/produce/fish out/unholster/unsheathe without deposit/usage verbs emit no tags; for discovery-on-person ensure pickup x1; for mixed pickup-then-drop list full pickup then a separate drop.\n" +
+            "Examples: {\\pickup} iron sword[weapon] x1, leather armor[armor] x1, rope[item] x1{\\!pickup}\n" +
+            "          {\\pickup} coin pouch[item] x1{\\!pickup}\n" +
+            "          {\\pickup} gold coin[item] x5, silver coin[item] x2{\\!pickup}\n" +
+            "          {\\pickup} wool cloak[clothing] x1{\\!pickup}\n" +
+            "          Take: 'You take two healing potions from the shelf.' → {\\pickup} healing potion[item] x2{\\!pickup}\n" +
+            "          {\\!drop} arrow x3{\\drop}\n" +
+            "          Drink: 'You drink a healing potion.' → {\\!drop} healing potion x1{\\drop}\n" +
+            "          Not a drop: 'You remove a torch from your pack.' → (no tags)\n" +
+            "          Vague drop: 'You drop a handful of berries.' → {\\!drop} berry x1{\\drop}\n" +
+            "          Both: {\\pickup} apple[item] x2{\\!pickup}{\\!drop} apple x1{\\drop}\n" +
+            "          Usage-only: 'You throw a throwing knife.' → {\\!drop} throwing knife x1{\\drop}\n" +
+            "          Mixed same-turn: 'You grab two apples and 1 pear, then drop one apple.' → {\\pickup} apple[item] x2, pear[item] x1{\\!pickup}{\\!drop} apple x1{\\drop}\n" +
+            "          Irregular merge: 'You collect three berries and one berry.' → {\\pickup} berry[item] x4{\\!pickup}\n" +
+            "          BAD: <pickup>(Kukri Knife)</pickup><pickup>(Camp Knife)</pickup>…\n" +
+            "          GOOD: {\\pickup} kukri knife[item] x1, camp knife[item] x1, backpack[item] x1, tomahawk[weapon] x1, bedroll[item] x1…{\\!pickup}\n" +
+            "</SYSTEM>\n"
+        );
+    }
+    // Standing instruction for injury/healing tagging
+    // Guides the model to wrap player injury and healing events with end-of-output tags for ACS to parse and log
+    function buildInjuryStandingPrompt(){
+        return (
+            "<SYSTEM>\n" +
+            "Injury Tagging (player; inline):\n" +
+            "- Write normal in-world narration. If the player is hurt or healed, you MUST wrap the exact sentence(s) that cause injury or apply healing.\n" +
+            "- Visible story = plain prose; ABSOLUTELY NO XML/HTML. Never output <injury> or <heal> tags; allowed wrappers only: {\\injury}...{\\!injury}, {\\heal}...{\\!heal}.\n" +
+            "- The 'Player Injuries' card is a historical log. Narrate current events only; mention prior injuries briefly in fresh prose if relevant.\n" +
+            "- Prefer 1–2 contiguous sentences per event (cause + immediate effect/outcome). For multiple events, emit separate pairs; close each before opening the next. Order: injuries before heals.\n" +
+            "- Self-check: remove any '<' or '>' characters; ensure a prose sentence remains; if cues like bite/clamp/puncture/teeth/stab/slash/cut/slice/smash/scrape/sting/break/fracture/burn/bleed/pain or heal/bandage/poultice/potion appear and you emitted no wrappers, you MUST wrap the relevant sentence(s) now, including semicolon clauses as a single event.\n" +
+            "Examples: {\\injury}The wolf clamps down on your forearm. Sharp teeth puncture skin and pain flares.{\\!injury}\n" +
+            "          {\\injury}The wolf clamps down on your forearm; sharp teeth puncture skin and pain flares.{\\!injury}\n" +
+            "          {\\heal}You bandage your forearm. The bleeding slows and your grip steadies.{\\!heal}\n" +
+            "          {\\injury}A stone drops from above and slams into your ribs. You gasp as the impact knocks the wind from you.{\\!injury} {\\heal}You wrap your ribs with bandages. Each breath hurts a little less.{\\!heal}\n" +
             "</SYSTEM>\n"
         );
     }
@@ -6362,7 +6396,7 @@ function ACS(inHook, inText, inStop) {
                 name = body.slice(0, mQty.index).trim();
             }
             // Optional trailing category token before xN
-            const mCat = name.match(/\s*\[(weapon|armor|item)\]\s*$/i);
+            const mCat = name.match(/\s*\[(weapon|armor|clothing|item)\]\s*$/i);
             if (mCat) {
                 cat = (mCat[1] || "").toLowerCase();
                 name = name.slice(0, mCat.index).trim();
@@ -6433,13 +6467,83 @@ function ACS(inHook, inText, inStop) {
             }
             const body = (acc.length ? acc.join("\n") : "- (empty)");
             return (
-                "\n-----\n" +
                 "<SYSTEM>\n" +
-                "Current Inventory (reference only; do not narrate this list unless it is relevant to the scene):\n" +
+                "Current Inventory (reference; not part of the visible narrative; do not echo):\n" +
                 body + "\n" +
                 "</SYSTEM>\n"
             );
         } catch { return ""; }
+    }
+    // Extract injury/heal tags from output and return [cleanText, events]
+    // events: [{ type: 'injury'|'heal', text: '...' }]
+    function extractInjuryTags(outText){
+        let text = String(outText ?? "");
+        const events = [];
+        const patterns = [
+            { type: "injury", open: /\{\\injury\}/g, close: /\{\\!injury\}/g },
+            { type: "heal",   open: /\{\\heal\}/g,   close: /\{\\!heal\}/g }
+        ];
+        for (const p of patterns) {
+            let mOpen;
+            while ((mOpen = p.open.exec(text)) !== null) {
+                const openIdx = mOpen.index;
+                p.close.lastIndex = openIdx + mOpen[0].length;
+                const mClose = p.close.exec(text);
+                if (!mClose) break;
+                const content = text.slice(openIdx + mOpen[0].length, mClose.index);
+                const raw = content.trim();
+                if (raw) {
+                    // Log the exact phrase as a single event; do not split on commas
+                    const line = raw.replace(/[\r\n]+/g, ' ').trim();
+                    if (line) events.push({ type: p.type, text: line });
+                }
+                // Replace the tag pair with the inner content to keep narrative intact
+                text = text.slice(0, openIdx) + content + text.slice(mClose.index + mClose[0].length);
+                p.open.lastIndex = 0; p.close.lastIndex = 0;
+            }
+        }
+        // Clean duplicate spaces introduced by replacements
+        text = text.replace(/\s{3,}/g, ' ').replace(/[\t \u00A0]+$/g, "").replace(/[\r\n]{3,}$/g, "\n\n");
+        return [text, events];
+    }
+    // Append injury/heal events as memory lines on the Player Injuries card (caps total lines for brevity)
+    function logInjuryEvents(events){
+        if (!events || !events.length) return;
+        try {
+            ensureCoreCards();
+            const card = API.getCard(c => (c.title === "Player Injuries"));
+            if (!card) return;
+            let desc = String(card.description || "");
+            // Ensure memory header exists and is updates:true for injuries
+            const DEFAULT_HEADER_TOP = "Auto-Cards will contextualize these memories:";
+            let lines = desc ? desc.split(/\r?\n/) : [];
+            const iTop = lines.findIndex(l => l.trim().startsWith(DEFAULT_HEADER_TOP));
+            if (iTop === -1) {
+                lines = [DEFAULT_HEADER_TOP, "{updates: true, limit: 500}"]; // fresh header for injuries
+            } else {
+                // Normalize updates:true while preserving limit if present
+                const cfg = (lines[iTop + 1] || "").trim();
+                const m = cfg.match(/\{\s*updates\s*:\s*(true|false)\s*,\s*limit\s*:\s*(\d+)\s*\}/i);
+                const limit = m ? (m[2] || "500") : "500";
+                lines[iTop + 1] = `{updates: true, limit: ${limit}}`;
+                // Keep only header + existing body after the two lines
+                lines = lines.slice(0, iTop + 2).concat(lines.slice(iTop + 2));
+            }
+            for (const ev of events) {
+                const tag = ev.type === 'heal' ? '[heal]' : '[injury]';
+                lines.push(`- ${tag} ${ev.text}`);
+            }
+            // Cap the log to last ~120 entries to avoid bloat
+            const head = lines.slice(0, 2);
+            const body = lines.slice(2);
+            const MAX = 120;
+            const trimmed = head.concat(body.slice(-MAX));
+            card.description = trimmed.join("\n");
+            if (A.SHOW_TOASTS) {
+                const msg = events.map(e => (e.type === 'heal' ? '+heal ' : '+hurt ') + e.text).join(", ");
+                state.message = (state.message || "") + "\nInjuries: " + msg;
+            }
+        } catch { /* noop */ }
     }
     // Apply pickup/drop deltas to inventory map
     function applyInventoryDeltas(invMap, deltas){
@@ -6458,13 +6562,14 @@ function ACS(inHook, inText, inStop) {
     }
     // Extract pickup/drop tags from output and return [cleanText, deltas]
     // Notes:
-    // - Pickup segments may include a single category token appended to the item name: [weapon] | [armor] | [item].
+    // - Pickup segments may include a single category token appended to the item name: [weapon] | [armor] | [clothing] | [item].
     //   These categories are REQUIRED by the standing prompt for pickup items but are not stored in Inventory; we strip them here.
     //   Categories must not appear in drop segments.
     // - Quantities are expressed as trailing "xN". Models may occasionally emit duplicate quantities (e.g., "arrow x5 x1").
     //   We peel all trailing xN tokens and choose the maximum to be conservative, then remove any leftover " xN" inside the name.
     function extractInventoryTags(outText){
         let text = String(outText ?? "");
+        const original = text;
         const deltas = [];
         // Patterns: {\pickup} ... {\!pickup} and {\!drop} ... {\drop}
         const patterns = [
@@ -6499,7 +6604,7 @@ function ACS(inHook, inText, inStop) {
                                 rest = rest.slice(0, mQty.index).trim();
                                 continue;
                             }
-                            const mCat = rest.match(/\s*\[(weapon|armor|item)\]\s*$/i);
+                            const mCat = rest.match(/\s*\[(weapon|armor|clothing|item)\]\s*$/i);
                             if (mCat) {
                                 category = (mCat[1] || "").toLowerCase();
                                 rest = rest.slice(0, mCat.index).trim();
@@ -6524,6 +6629,24 @@ function ACS(inHook, inText, inStop) {
         }
         // Clean trailing whitespace left by tags
         text = text.replace(/[\t \u00A0]+$/g, "").replace(/[\r\n]{3,}$/g, "\n\n");
+
+        // Guardrail: If model incorrectly emitted only a drop for non-drop actions (remove/draw/ready/equip), ignore those drops.
+        // This mirrors standing prompt self-checks and prevents false drops when the player simply readies an item from their pack/belt.
+        if (deltas.length) {
+            const hasPickup = deltas.some(d => d.type === "pickup");
+            const hasDrop = deltas.some(d => d.type === "drop");
+            if (hasDrop && !hasPickup) {
+                const t = String(original || "");
+                const reRemove = /(\bremove\b|\bdraw\b|\bready\b|\bequip\b|\bunsheath\b|\bunsheathe\b|\bunholster\b|\btake\s+out\b|\bpull\s+out\b)/i;
+                const reDropVerbs = /(\bdrop\b|\bdiscard\b|\bleave\b|\bplace\b|\bset(?:\s+down)?\b|\bput(?:\s+down)?\b|\blay(?:\s+down)?\b)/i;
+                const reUsage = /(\bshoot\b|\bfire\b|\bloose\b|\blaunch\b|\bhurl\b|\bthrow\b|\bdrink\b|\bquaff\b|\bswallow\b|\beat\b|\bdevour\b|\bconsume\b|\bburn\b|\bpay\b|\bspend\b|\buse(?:\s+charges?)?\b)/i;
+                if (reRemove.test(t) && !reDropVerbs.test(t) && !reUsage.test(t)) {
+                    for (let i = deltas.length - 1; i >= 0; i--) {
+                        if (deltas[i].type === "drop") deltas.splice(i, 1);
+                    }
+                }
+            }
+        }
         return [text, deltas];
     }
     switch(HOOK){
@@ -6552,10 +6675,13 @@ function ACS(inHook, inText, inStop) {
                         const hasCard = existingTitles.has(title) || !!API.getCard(c => (c.title === title));
                         if (hasCard) continue;
                         // Queue a generated item card with a descriptive prompt to ensure unique entries
-                        const type = (cat === "weapon") ? "weapon" : (cat === "armor") ? "armor" : "item";
+                        const type = (cat === "weapon") ? "weapon" : (cat === "armor") ? "armor" : (cat === "clothing") ? "clothing" : "item";
                         const detailsByType = {
                             weapon: (
                                 "Describe only the weapon itself: classification (e.g., longsword, dagger, bow), form factor, materials and construction, balance/handling/weight class, edge/point condition, typical damage profile (slash/pierce/blunt), fittings/guard/grip, and any maker's marks or inscriptions. Example: 'A hand-and-a-half longsword with a mild steel blade, leather-wrapped grip, and slightly forward balance, its edge service-sharp and crossguard stamped with a smith's mark.'"
+                            ),
+                            clothing: (
+                                "Describe only the garment itself (non-protective clothing): cut and pattern (cloak, tunic, robe, trousers, shirt, soft boots), fabric/material and weave, color/dye and any embroidery or trim, drape and fit, fastening/closures, wear and condition, and notable details like hems, patches, or insignia. Avoid protective/armor wording. Example: 'A woolen travel cloak dyed a muted green, cut wide with a generous drape, its edge bound in simple leather trim and a brass clasp at the throat, the fabric showing light pilling from regular use.'"
                             ),
                             armor: (
                                 "Describe only the armor itself: coverage and components (e.g., cuirass, brigandine, greaves), materials and construction method (plates/scales/leather), fastening and fit profile, weight/bulk class, protective qualities, and condition (wear, dents, repairs), plus any markings. Example: 'A riveted brigandine cuirass over quilted backing, iron plates hidden under dyed leather panels, laced at the sides for a snug fit and scuffed from steady use.'"
@@ -6574,17 +6700,16 @@ function ACS(inHook, inText, inStop) {
                             // Append only extra category-focused lines to the standard Auto-Cards prompt
                             `- For inventory object cards: describe only intrinsic properties of ${title} (purpose/function, operating mechanism, materials/craftsmanship, condition/durability, notable markings/inscriptions); avoid story or scene content.\n` +
                             `- If ${title} is a weapon: include classification (e.g., longsword, dagger, bow), form factor, materials/construction, balance/handling/weight class, edge/point condition, fittings/guard/grip, and any maker's marks.\n` +
+                            `- If ${title} is clothing (non-armor): include cut/pattern, fabric/material and weave, color/dye, drape/fit, closures, wear/condition, and notable trim/embroidery/insignia. Avoid protective/armor claims.\n` +
                             `- If ${title} is armor: include coverage/components (e.g., cuirass, brigandine, greaves), materials/construction, fastening/fit, weight/bulk class, protective qualities, condition, and any markings.\n` +
                             `- Keep to a single compact paragraph around 400 characters.`
                         );
                         // Seed the header so the model must not repeat it
                         const entryStart = `{title: ${title}}\n` + "";
+                        // Description includes only meta lines; Auto-Cards will add its memory header for us
                         const description = [
                             `Category: ${cat || "item"}`,
-                            `Current quantity: x${qty}`,
-                            "",
-                            "Auto-Cards will contextualize these memories:",
-                            "{updates: true, limit: 2750}"
+                            `Current quantity: x${qty}`
                         ].join("\n");
                         try {
                             const ok = API.generateCard({
@@ -6593,7 +6718,7 @@ function ACS(inHook, inText, inStop) {
                                 entryPromptDetails,
                                 entryStart,
                                 description,
-                                memoryUpdates: true,
+                                memoryUpdates: false,
                                 memoryLimit: 2750,
                                 entryLimit: 400
                             });
@@ -6623,7 +6748,46 @@ function ACS(inHook, inText, inStop) {
                     state.message = (state.message || "") + "\nACS: /inv — " + msg;
                 }
                 // Replace visible text with a standard continue prompt like Auto-Cards
-                return ">>> please select \"continue\" (0%) <<<";
+                return ">>> Generating inventory item story cards... please select \"continue\" (0%) <<<";
+            }
+            // Command: /inj — schedule model-based summarization of Player Injuries memories (uses Auto-Cards compression prompt)
+            if (/^\s*\/inj\b/i.test(t)) {
+                ensureCoreCards();
+                try {
+                    const card = API.getCard(c => (c.title === "Player Injuries"));
+                    if (!card) { return TEXT; }
+                    // Extract existing memories (skip the two-line memory header)
+                    const desc = String(card.description || "");
+                    const memLines = desc.split(/\r?\n/).slice(2)
+                        .map(s => s.replace(/^\s*-+\s*/, '').trim())
+                        .filter(Boolean);
+                    if (!memLines.length) {
+                        if (A && A.SHOW_TOASTS) {
+                            state.message = (state.message || "") + "\nACS: /inj — no injury memories to summarize.";
+                        }
+                        return TEXT;
+                    }
+                    // Initialize Auto-Cards compression work for this card
+                    const ac = (function(){
+                        try { return (state && state.AutoCards) ? state.AutoCards : (AutoCards() && state.AutoCards) ? state.AutoCards : {}; } catch { return {}; }
+                    })();
+                    if (!ac.compression) { ac.compression = { titleKey: "", oldMemoryBank: [], newMemoryBank: [], completed: 0, lastConstructIndex: -1, responseEstimate: 0, vanityTitle: "" }; }
+                    ac.compression.oldMemoryBank = memLines;
+                    ac.compression.completed = 0;
+                    ac.compression.titleKey = "player injuries";
+                    ac.compression.vanityTitle = "Player Injuries";
+                    // Calibrate expected model response size (heuristic; avoid calling Auto-Cards internals here)
+                    ac.compression.responseEstimate = 1200;
+                    ac.compression.lastConstructIndex = -1;
+                    ac.compression.newMemoryBank = [];
+                    try { state.AutoCards = ac; } catch { /* noop */ }
+                    if (A && A.SHOW_TOASTS) {
+                        state.message = (state.message || "") + "\nACS: /inj — summarizing Player Injuries memories...";
+                    }
+                    // Replace visible text with an Auto-Cards style continue prompt (model will run on context/output)
+                    return ">>> Summarizing injuries... please select \"continue\" (0%) <<<";
+                } catch { /* noop */ }
+                return TEXT;
             }
         } catch { /* noop */ }
         // Keep input otherwise pass-through
@@ -6632,6 +6796,15 @@ function ACS(inHook, inText, inStop) {
         ensureCoreCards();
         try {
             const bag = (state._ACS && typeof state._ACS === "object") ? state._ACS : {};
+            // If Auto-Cards compression is active (e.g., /inj summary), suppress ACS prompts/snapshots entirely
+            try {
+                const ac = (state && state.AutoCards) ? state.AutoCards : null;
+                const comp = ac && ac.compression;
+                const key = comp && (String(comp.titleKey || comp.vanityTitle || "").toLowerCase());
+                if (comp && key && key.includes("player injuries") && typeof comp.completed === "number" && comp.completed < 100) {
+                    return [TEXT, STOP];
+                }
+            } catch { /* noop */ }
             // Priority: pendingInvTitles mechanism — suppress until all requested item cards exist
             if (Array.isArray(bag.pendingInvTitles) && bag.pendingInvTitles.length) {
                 const remaining = [];
@@ -6650,7 +6823,7 @@ function ACS(inHook, inText, inStop) {
                 const ttlActive = (bag.pendingInvTTL > 0);
                 state._ACS = bag;
                 if (remaining.length && ttlActive) {
-                    // Still waiting on some cards to be built — suppress inventory prompt/snapshot
+                    // Still waiting on some cards to be built — suppress inventory and injury prompts and snapshot
                     return [TEXT, STOP];
                 }
                 // Else, pending resolved or TTL expired — clear fields and continue
@@ -6665,15 +6838,32 @@ function ACS(inHook, inText, inStop) {
                 return [TEXT, STOP];
             }
         } catch { /* noop */ }
-        // Append concise standing prompt for inventory tagging and a compact inventory snapshot
-        const taggedText = TEXT + buildInventoryStandingPrompt() + buildInventoryContextBlock();
+        // Append concise standing prompts and a compact inventory snapshot
+        // Do not send the inventory tagging prompt on the very first opening turn
+        const isOpening = (typeof info === "object" && info && typeof info.actionCount === "number" && info.actionCount < 1);
+        const taggedText = isOpening
+            ? (TEXT + buildInventoryContextBlock())
+            : (TEXT + buildInventoryStandingPrompt() + buildInjuryStandingPrompt() + buildInventoryContextBlock());
         return [taggedText, STOP]; }
     case "output": {
-        // Process inventory tags and update Inventory card; strip tags from visible output
-        let cleaned = TEXT;
+        // If Auto-Cards compression is active (e.g., /inj summary is in progress),
+        // replace any internal prompt with a user-friendly progress message and skip ACS processing.
+        try {
+            const ac = (state && state.AutoCards) ? state.AutoCards : null;
+            const comp = ac && ac.compression;
+            const key = comp && (String(comp.titleKey || comp.vanityTitle || "").toLowerCase());
+            if (comp && key && key.includes("player injuries") && typeof comp.completed === "number" && comp.completed < 100) {
+                // Show a minimal progress message instead of leaking internal <SYSTEM> instructions
+                const pct = Math.max(0, Math.min(99, Math.floor(Number(comp.completed) || 0)));
+                return ">>> Summarizing Player Injuries... please select \"continue\" (" + pct + "%)";
+            }
+        } catch { /* noop */ }
+    // Process inventory tags and update Inventory card; strip tags from visible output
+    // Do not convert XML-like mistakes. Work with the model's output as-is to surface issues in tests.
+    let cleaned = TEXT;
         let deltas = [];
         try {
-            [cleaned, deltas] = extractInventoryTags(TEXT);
+            [cleaned, deltas] = extractInventoryTags(cleaned);
             if (deltas.length) {
                 // Ensure Inventory card exists
                 ensureCoreCards();
@@ -6686,6 +6876,36 @@ function ACS(inHook, inText, inStop) {
                         const msg = deltas.map(d => (d.type === "pickup" ? "+" : "-") + " " + d.name + " x" + d.qty).join(", ");
                         state.message = (state.message || "") + "\nInventory: " + msg;
                     }
+                }
+            }
+            // Extract and log injury/heal events, scrubbing tags from the visible output
+            let events = [];
+            [cleaned, events] = extractInjuryTags(cleaned);
+            if (events && events.length) {
+                logInjuryEvents(events);
+            }
+            // Final safety scrub: remove any leaked <SYSTEM> blocks from visible output
+            // These are context-only instructions (e.g., Inventory/Player Injuries snapshots) and should never appear in prose.
+            // 1) Properly closed blocks
+            cleaned = cleaned.replace(/<SYSTEM\b[^>]*>[\s\S]*?<\/SYSTEM>/gi, "");
+            // 2) Dangling '<SYSTEM>' with no closing tag — strip to end-of-string as a last resort
+            if (/<SYSTEM\b/i.test(cleaned) && !/<\/SYSTEM>/i.test(cleaned)) {
+                cleaned = cleaned.replace(/<SYSTEM[\s\S]*$/i, "");
+            }
+            // 3) If any trailing partial uppercase tag remains (e.g., '</SY'), drop that tail
+            cleaned = cleaned.replace(/<\s*\/?\s*[A-Z][A-Z0-9_-]*[^>]*$/g, "");
+            // As a last resort for visible prose only, drop any stray non-ACS angle-bracket tags to prevent leaking markup
+            cleaned = cleaned.replace(/<(?!SYSTEM\b)[^>]*>/g, "");
+
+            // Last-resort: if scrubbing removed everything, salvage plain prose or emit a safe minimal placeholder
+            if (!/\S/.test(cleaned || "")) {
+                // Try to salvage from original TEXT by removing any angle-bracket tags
+                const salvage = String(TEXT || "").replace(/<[^>]*>/g, "").trim();
+                if (salvage) {
+                    cleaned = salvage;
+                } else {
+                    // Minimal non-empty output to avoid blank turns in the client
+                    cleaned = "…"; // plain ellipsis
                 }
             }
         } catch { /* noop */ }

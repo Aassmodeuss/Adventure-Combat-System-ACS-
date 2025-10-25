@@ -1,3 +1,5 @@
+// @ts-nocheck
+/* globals AutoCards, ACS */
 /// <reference types="../types/ScriptingTypes.d.ts"/>
 // Your "Output" tab should look like this
 const modifier = (text) => {
